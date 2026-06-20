@@ -2,8 +2,19 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>漢字クイズ — Vault Quiz</title>
+
+<!-- PWA / iOS home-screen app -->
+<meta name="theme-color" content="#0f0f0f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kanji Quiz">
+<meta name="application-name" content="Kanji Quiz">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <style>
 :root {
   --bg: #0f0f0f;
@@ -31,7 +42,7 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 20px 16px 40px;
+  padding: calc(20px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
 }
 .wrap { width: 100%; max-width: 480px; }
 
@@ -333,7 +344,7 @@ body {
       <div class="mode-pill" data-mode="pick">Seç kanji</div>
     </div>
 
-    <div class="section-label" style="margin-bottom:12px;">Soru sayısı</div>
+    <div class="section-label" style="margin-bottom:12px;">Oturum uzunluğu (soru)</div>
     <div class="mode-row" id="qcount-row">
       <div class="mode-pill on" data-n="10">10</div>
       <div class="mode-pill" data-n="20">20</div>
@@ -431,23 +442,54 @@ const CLEAN_DATA = KANJI_DATA
 
 // 10 kanjilik bölümlere ayır
 const LEVEL_SIZE = 10;
-const PASS_PCT = 80;        // bölümü geçmek için gereken doğru yüzdesi
+const MASTERY_PCT = 85;     // bölümü tamamlamak için öğrenilmesi gereken kelime yüzdesi
+const LEARN_HITS = 2;       // bir kelimenin "öğrenildi" sayılması için gereken doğru sayısı
 const LEVELS = [];
 for (let i = 0; i < CLEAN_DATA.length; i += LEVEL_SIZE) {
   LEVELS.push(CLEAN_DATA.slice(i, i + LEVEL_SIZE));
 }
 
 // ── PROGRESS (localStorage) ────────────────────────────────────────────────
-const PROG_KEY = 'kanjiBossProgress_v1';
+// v2: kelime-bazlı ustalık. stats[wordKey] = doğru sayacı; LEARN_HITS'e ulaşınca "öğrenildi".
+const PROG_KEY = 'kanjiMasteryProgress_v2';
+const OLD_PROG_KEY = 'kanjiBossProgress_v1';
 function loadProgress() {
   try {
     const p = JSON.parse(localStorage.getItem(PROG_KEY));
-    if (p && typeof p.unlocked === 'number') return { unlocked: p.unlocked, scores: p.scores || {} };
+    if (p && p.stats) return { unlocked: p.unlocked || 0, stats: p.stats };
   } catch (e) {}
-  return { unlocked: 0, scores: {} };
+  // v1'den yalnızca açılmış bölüm sayısını taşı (kelime istatistiği taşınamaz)
+  try {
+    const old = JSON.parse(localStorage.getItem(OLD_PROG_KEY));
+    if (old && typeof old.unlocked === 'number') return { unlocked: old.unlocked, stats: {} };
+  } catch (e) {}
+  return { unlocked: 0, stats: {} };
 }
 function saveProgress() { try { localStorage.setItem(PROG_KEY, JSON.stringify(progress)); } catch (e) {} }
 let progress = loadProgress();
+
+// ── MASTERY HELPERS ────────────────────────────────────────────────────────
+function wordKey(w) { return w.word + '\u241f' + firstReading(w.reading); }
+function sectionWords(idx) { return LEVELS[idx].flatMap(k => k.words.map(w => ({ ...w, _kanji: k }))); }
+function isLearned(w) { return (progress.stats[wordKey(w)] || 0) >= LEARN_HITS; }
+function learnedCount(idx) { return sectionWords(idx).filter(isLearned).length; }
+function sectionMastery(idx) {
+  const words = sectionWords(idx);
+  if (!words.length) return 0;
+  return Math.round(words.filter(isLearned).length / words.length * 100);
+}
+function isMastered(idx) { return sectionMastery(idx) >= MASTERY_PCT; }
+// Tamamlanan bölümleri takip ederek bir sonrakini aç
+function syncUnlock() {
+  while (progress.unlocked < LEVELS.length - 1 && isMastered(progress.unlocked)) {
+    progress.unlocked++;
+  }
+}
+function recordAnswer(w, correct) {
+  const k = wordKey(w);
+  const cur = progress.stats[k] || 0;
+  progress.stats[k] = correct ? Math.min(LEARN_HITS, cur + 1) : Math.max(0, cur - 1);
+}
 
 // ── STATE ─────────────────────────────────────────────────────────────────
 let gameMode = 'mix';       // mix | meaning | reading | pick
@@ -484,38 +526,47 @@ function buildSetup() {
 }
 
 function buildLevelMap() {
+  syncUnlock();
   const grid = document.getElementById('level-grid');
   grid.innerHTML = '';
   LEVELS.forEach((lvl, idx) => {
     const locked = idx > progress.unlocked;
-    const cleared = progress.scores[idx] != null && progress.scores[idx] >= PASS_PCT;
+    const cleared = isMastered(idx);
     const isCurrent = idx === progress.unlocked;
     const card = document.createElement('div');
     card.className = 'level-card' + (locked ? ' locked' : '') + (cleared ? ' cleared' : '') + (isCurrent && !cleared ? ' current' : '');
-    const kanjiStr = lvl.map(k => k.display).join(' ');
-    const best = progress.scores[idx];
-    const badge = cleared ? '<span class="lc-badge pass">✓ Geçildi</span>'
+    const kanjiStr = escapeHtml(lvl.map(k => k.display).join(' '));
+    const total = sectionWords(idx).length;
+    const learned = learnedCount(idx);
+    const pct = sectionMastery(idx);
+    const badge = cleared ? '<span class="lc-badge pass">✓ Tamamlandı</span>'
                           : (locked ? '<span class="lc-badge">🔒</span>' : '<span class="lc-badge">Açık</span>');
     card.innerHTML =
       `<div class="lc-top"><span class="lc-num">Bölüm ${idx+1}</span>${badge}</div>` +
       `<div class="lc-kanji">${kanjiStr}</div>` +
-      (best != null ? `<div class="lc-score">En iyi: %${best}</div>` : '') +
+      (!locked ? `<div class="lc-score">${learned}/${total} kelime · %${pct}</div>` : '') +
       (locked ? '<div class="lc-lock">🔒</div>' : '');
     if (!locked) card.onclick = () => startLevel(idx);
     grid.appendChild(card);
   });
 
-  const cleared = Object.values(progress.scores).filter(s => s >= PASS_PCT).length;
-  document.getElementById('lm-prog').textContent = `${cleared}/${LEVELS.length} geçildi`;
+  const mastered = LEVELS.reduce((n, _, idx) => n + (isMastered(idx) ? 1 : 0), 0);
+  document.getElementById('lm-prog').textContent = `${mastered}/${LEVELS.length} tamamlandı`;
   document.getElementById('continue-btn').textContent =
     `Bölüm ${Math.min(progress.unlocked + 1, LEVELS.length)} → devam et`;
 }
 
 function resetProgress() {
   if (!confirm('Tüm ilerleme silinecek. Emin misin?')) return;
-  progress = { unlocked: 0, scores: {} };
+  progress = { unlocked: 0, stats: {} };
   saveProgress();
   buildLevelMap();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => (
+    { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]
+  ));
 }
 
 // ── QUESTION GENERATION ───────────────────────────────────────────────────
@@ -530,6 +581,26 @@ function shuffle(arr) {
 
 const MODES = ['meaning','reading','pick'];
 
+// İlk okunuşu sadeleştir: "まいつき / まいげつ (istisna)" → "まいつき"
+function firstReading(r) {
+  return String(r).split('/')[0].split(' ')[0].trim();
+}
+
+// Doğru cevapla ve kendi aralarında tekrar etmeyen en fazla n çeldirici seç
+function pickDistractors(pool, getVal, correctVal, n) {
+  const seen = new Set([String(correctVal).trim()]);
+  const out = [];
+  for (const w of shuffle(pool)) {
+    const v = getVal(w);
+    const key = String(v).trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+    if (out.length >= n) break;
+  }
+  return out;
+}
+
 function buildQuestion(wordEntry, kanjiEntry, allWords) {
   // Determine mode for this question
   let mode = gameMode;
@@ -537,12 +608,11 @@ function buildQuestion(wordEntry, kanjiEntry, allWords) {
 
   // Build distractors from all words pool
   const others = allWords.filter(w => w.word !== wordEntry.word);
-  const distShuffled = shuffle(others);
 
   if (mode === 'meaning') {
     // Show: kanji word → pick Turkish meaning
     const correctAns = wordEntry.meaning;
-    const wrongAnswers = distShuffled.slice(0,3).map(w => w.meaning);
+    const wrongAnswers = pickDistractors(others, w => w.meaning, correctAns, 3);
     return {
       mode,
       display: wordEntry.word,
@@ -558,8 +628,8 @@ function buildQuestion(wordEntry, kanjiEntry, allWords) {
     };
   } else if (mode === 'reading') {
     // Show: kanji word → pick reading (hiragana)
-    const correctAns = wordEntry.reading.split('/')[0].split(' ')[0].trim();
-    const wrongAnswers = distShuffled.slice(0,3).map(w => w.reading.split('/')[0].split(' ')[0].trim());
+    const correctAns = firstReading(wordEntry.reading);
+    const wrongAnswers = pickDistractors(others, w => firstReading(w.reading), correctAns, 3);
     return {
       mode,
       display: wordEntry.word,
@@ -576,7 +646,7 @@ function buildQuestion(wordEntry, kanjiEntry, allWords) {
   } else {
     // pick: Show Turkish meaning → pick kanji word
     const correctAns = wordEntry.word;
-    const wrongAnswers = distShuffled.slice(0,3).map(w => w.word);
+    const wrongAnswers = pickDistractors(others, w => w.word, correctAns, 3);
     return {
       mode,
       display: wordEntry.meaning,
@@ -594,17 +664,17 @@ function buildQuestion(wordEntry, kanjiEntry, allWords) {
 }
 
 function generateQuestions() {
-  // Aktif bölümdeki 10 kanjinin tüm kelimelerini topla
-  const pool = LEVELS[currentLevel];
-  const allWords = pool.flatMap(k => k.words.map(w => ({...w, _kanji: k})));
+  // Aktif bölümdeki kanjilerin tüm kelimeleri (çeldirici havuzu)
+  const allWords = sectionWords(currentLevel);
 
-  // Her soru için bir kelime seç, sıralı round-robin + shuffle
-  const shuffledWords = shuffle(allWords);
+  // Öğrenilmemiş kelimelere öncelik ver; az doğrusu olanlar önce gelir
+  const ordered = shuffle(allWords)
+    .sort((a, b) => (progress.stats[wordKey(a)] || 0) - (progress.stats[wordKey(b)] || 0));
+
   questions = [];
-  for (let i = 0; i < Math.min(totalQ, shuffledWords.length); i++) {
-    const wordEntry = shuffledWords[i];
-    const q = buildQuestion(wordEntry, wordEntry._kanji, allWords);
-    questions.push(q);
+  for (let i = 0; i < Math.min(totalQ, ordered.length); i++) {
+    const wordEntry = ordered[i];
+    questions.push(buildQuestion(wordEntry, wordEntry._kanji, allWords));
   }
 }
 
@@ -620,12 +690,21 @@ function startLevel(idx) {
   // Boss bar
   document.getElementById('boss-title').textContent = `Bölüm ${idx+1} / ${LEVELS.length}`;
   document.getElementById('boss-kanji').textContent = LEVELS[idx].map(k => k.display).join(' ');
-  document.getElementById('boss-need').textContent = `Geçmek için %${PASS_PCT}`;
+  document.getElementById('boss-need').textContent = `Açmak için kelimelerin %${MASTERY_PCT}'i`;
 
   document.getElementById('setup').style.display = 'none';
   document.getElementById('endscreen').style.display = 'none';
   document.getElementById('game').style.display = 'block';
   renderQ();
+}
+
+function updateMasteryBar() {
+  const total = sectionWords(currentLevel).length;
+  const learned = learnedCount(currentLevel);
+  const pct = sectionMastery(currentLevel);
+  document.getElementById('p-fill').style.width = pct + '%';
+  document.getElementById('p-label').textContent = `Öğrenilen: ${learned}/${total} kelime`;
+  document.getElementById('p-pct').textContent = pct + '%';
 }
 
 function renderQ() {
@@ -639,11 +718,8 @@ function renderQ() {
   document.getElementById('s-w').textContent = wrong;
   document.getElementById('s-streak').textContent = streak >= 3 ? streak+'🔥' : streak;
 
-  // Progress
-  const pct = Math.round(qi/total*100);
-  document.getElementById('p-fill').style.width = pct + '%';
-  document.getElementById('p-label').textContent = `${q.kanji.display} kanjisinden`;
-  document.getElementById('p-pct').textContent = pct + '%';
+  // Progress bar = bölüm ustalığı (öğrenilen kelime oranı), canlı güncellenir
+  updateMasteryBar();
 
   // Card
   document.getElementById('q-mode-tag').textContent = q.modeTag;
@@ -651,7 +727,7 @@ function renderQ() {
   disp.textContent = q.display;
   disp.className = 'q-display ' + q.displayClass;
   document.getElementById('q-sub').textContent = q.sub;
-  document.getElementById('q-kg').textContent = q.mode === 'pick' ? '' : '';
+  document.getElementById('q-kg').textContent = '';
 
   // Feedback
   const fb = document.getElementById('feedback');
@@ -661,13 +737,15 @@ function renderQ() {
   // Options
   const opts = document.getElementById('options');
   opts.innerHTML = '';
-  q.options.forEach(opt => {
+  q.options.forEach((opt, i) => {
     const btn = document.createElement('button');
     btn.className = 'opt-btn';
-    if (q.optType === 'word') {
-      btn.innerHTML = `<span class="opt-jp">${opt}</span>`;
-    } else if (q.optType === 'reading') {
-      btn.innerHTML = `<span class="opt-jp">${opt}</span>`;
+    btn.setAttribute('aria-label', `Şık ${i+1}: ${opt}`);
+    if (q.optType === 'word' || q.optType === 'reading') {
+      const span = document.createElement('span');
+      span.className = 'opt-jp';
+      span.textContent = opt;
+      btn.appendChild(span);
     } else {
       btn.textContent = opt;
     }
@@ -688,6 +766,10 @@ function checkAnswer(btn, chosen, q) {
 
   const fb = document.getElementById('feedback');
   const isCorrect = chosen === q.correctAnswer;
+
+  // Kelime-bazlı ustalığı güncelle ve kaydet
+  recordAnswer(q.word, isCorrect);
+  saveProgress();
 
   if (isCorrect) {
     btn.classList.add('correct');
@@ -722,6 +804,7 @@ function checkAnswer(btn, chosen, q) {
     fb.className = 'feedback wrong';
   }
 
+  updateMasteryBar();
   document.getElementById('next-btn').style.display = 'block';
 }
 
@@ -734,38 +817,43 @@ function nextQ() {
 function showEnd() {
   document.getElementById('game').style.display = 'none';
   document.getElementById('endscreen').style.display = 'block';
-  const pct = Math.round(correct/questions.length*100);
-  const passed = pct >= PASS_PCT;
 
-  // İlerlemeyi kaydet (en iyi skoru tut)
-  const prev = progress.scores[currentLevel];
-  if (prev == null || pct > prev) progress.scores[currentLevel] = pct;
+  const sessionPct = Math.round(correct/questions.length*100);
+  const total = sectionWords(currentLevel).length;
+  const learned = learnedCount(currentLevel);
+  const masteryPct = sectionMastery(currentLevel);
+  const mastered = masteryPct >= MASTERY_PCT;
   const isLast = currentLevel >= LEVELS.length - 1;
-  if (passed && currentLevel === progress.unlocked && !isLast) {
-    progress.unlocked = currentLevel + 1;   // sonraki bölümü aç
-  }
+
+  // Ustalık eşiğine ulaşıldıysa bir sonraki bölümü aç
+  const prevUnlocked = progress.unlocked;
+  syncUnlock();
+  const justUnlocked = progress.unlocked > prevUnlocked;
   saveProgress();
 
   const banner = document.getElementById('pass-banner');
-  banner.className = 'pass-banner ' + (passed ? 'pass' : 'fail');
-  banner.textContent = passed
-    ? (isLast ? '🏆 Son bölümü de geçtin!' : '勝利！ Bölüm geçildi — yeni bölüm açıldı!')
-    : `敗北… %${PASS_PCT} gerekiyordu, geçemedin`;
+  banner.className = 'pass-banner ' + (mastered ? 'pass' : 'fail');
+  banner.textContent = mastered
+    ? (isLast ? '🏆 Tüm kelimeleri öğrendin!' : (justUnlocked ? '勝利！ Bölüm tamamlandı — yeni bölüm açıldı!' : '✓ Bölüm tamamlandı!'))
+    : `Devam et — kelimelerin %${MASTERY_PCT}'ini öğrenince bölüm açılır`;
 
-  document.getElementById('end-score').textContent = correct + '/' + questions.length;
-  const label = pct >= 90 ? '素晴らしい！ 🎉' : pct >= 70 ? 'İyi gidiyor 👍' : pct >= 50 ? 'Devam et 📖' : 'Daha fazla çalış 💪';
-  document.getElementById('end-sub').textContent = `%${pct} doğru · En uzun seri: ${maxStreak} · ${label}`;
+  document.getElementById('end-score').textContent = `${learned}/${total}`;
+  const remaining = Math.max(0, Math.ceil(total * MASTERY_PCT/100) - learned);
+  const label = mastered ? 'Bölüm tamam 🎉'
+    : (remaining <= 3 ? `Az kaldı! ${remaining} kelime daha 💪` : `${remaining} kelime daha öğren 📖`);
+  document.getElementById('end-sub').textContent =
+    `Bölüm ustalığı: %${masteryPct} · Bu oturum: %${sessionPct} doğru · En uzun seri: ${maxStreak} · ${label}`;
 
   // Eylem butonları
   const acts = document.getElementById('end-actions');
   acts.innerHTML = '';
-  if (passed && !isLast) {
+  if (mastered && !isLast) {
     acts.appendChild(makeBtn('start-btn', `Sonraki bölüm (${currentLevel+2}) →`, () => startLevel(currentLevel + 1)));
-    acts.appendChild(makeBtn('btn-ghost', 'Bu bölümü tekrar oyna', () => startLevel(currentLevel)));
-  } else if (!passed) {
-    acts.appendChild(makeBtn('start-btn', 'Tekrar dene', () => startLevel(currentLevel)));
-  } else { // son bölüm geçildi
-    acts.appendChild(makeBtn('start-btn', 'Tekrar oyna', () => startLevel(currentLevel)));
+    acts.appendChild(makeBtn('btn-ghost', 'Bu bölümü tekrarla', () => startLevel(currentLevel)));
+  } else if (!mastered) {
+    acts.appendChild(makeBtn('start-btn', 'Çalışmaya devam et', () => startLevel(currentLevel)));
+  } else { // son bölüm de tamamlandı
+    acts.appendChild(makeBtn('start-btn', 'Tekrar çalış', () => startLevel(currentLevel)));
   }
   acts.appendChild(makeBtn('btn-ghost', 'Bölüm haritası', () => showSetup()));
 }
@@ -785,8 +873,29 @@ function showSetup() {
   document.getElementById('setup').style.display = 'block';
 }
 
+// ── KEYBOARD ──────────────────────────────────────────────────────────────
+// 1-9: şık seç · Enter/Space: sonraki soru
+document.addEventListener('keydown', (e) => {
+  if (document.getElementById('game').style.display !== 'block') return;
+  if (!answered && e.key >= '1' && e.key <= '9') {
+    const idx = parseInt(e.key, 10) - 1;
+    const btns = document.querySelectorAll('.opt-btn');
+    if (idx < btns.length) btns[idx].click();
+  } else if (answered && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    if (document.getElementById('next-btn').style.display !== 'none') nextQ();
+  }
+});
+
 // ── INIT ──────────────────────────────────────────────────────────────────
 buildSetup();
+
+// ── SERVICE WORKER (çevrimdışı çalışma) ────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
 </script>
 </body>
 </html>
