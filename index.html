@@ -119,6 +119,36 @@ body {
 
 /* Options */
 .options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+
+/* Yazma modu (input) */
+.input-row { display: none; gap: 10px; margin-bottom: 16px; }
+.answer-input {
+  flex: 1; min-width: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 14px;
+  color: var(--text);
+  font-family: var(--font-jp);
+  font-size: 20px;
+  outline: none;
+}
+.answer-input:focus { border-color: var(--accent); }
+.answer-input.input-correct { background: var(--green-bg); border-color: var(--green); color: var(--green); }
+.answer-input.input-wrong { background: var(--red-bg); border-color: var(--red); color: var(--red); }
+.answer-input:disabled { opacity: 1; }
+.submit-btn {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  color: var(--text);
+  font-size: 15px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.submit-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.submit-btn:disabled { opacity: 0.4; cursor: default; }
 .opt-btn {
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -376,6 +406,7 @@ body {
       <div class="mode-pill" data-mode="meaning">Anlam</div>
       <div class="mode-pill" data-mode="reading">Okunuş</div>
       <div class="mode-pill" data-mode="pick">Seç kanji</div>
+      <div class="mode-pill" data-mode="input">Yazma</div>
     </div>
 
     <div class="section-label" style="margin-bottom:12px;">Oturum uzunluğu (soru)</div>
@@ -429,6 +460,10 @@ body {
     </div>
 
     <div class="options" id="options"></div>
+    <div class="input-row" id="input-row">
+      <input type="text" id="answer-input" class="answer-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Okunuşu yaz" placeholder="おくりがな…">
+      <button class="submit-btn" id="submit-btn">Cevapla</button>
+    </div>
     <div class="feedback" id="feedback"></div>
     <div class="explain" id="explain"></div>
     <button class="next-btn" id="next-btn" onclick="nextQ()">次へ →</button>
@@ -693,7 +728,23 @@ function buildQuestion(wordEntry, kanjiEntry, allWords) {
   // Build distractors from all words pool
   const others = allWords.filter(w => w.word !== wordEntry.word);
 
-  if (mode === 'meaning') {
+  if (mode === 'input') {
+    // Yazma: kanji kelime göster → okunuşu yaz
+    const correctAns = firstReading(wordEntry.reading);
+    return {
+      mode,
+      display: wordEntry.word,
+      displayClass: 'word-mode',
+      modeTag: '書いてください  Okunuşu yaz',
+      sub: wordEntry.meaning,
+      kanjiGroup: kanjiEntry.kanji,
+      correctAnswer: correctAns,
+      options: [],
+      word: wordEntry,
+      kanji: kanjiEntry,
+      optType: 'input'
+    };
+  } else if (mode === 'meaning') {
     // Show: kanji word → pick Turkish meaning
     const correctAns = wordEntry.meaning;
     const wrongAnswers = pickDistractors(others, w => w.meaning, correctAns, 3);
@@ -891,24 +942,43 @@ function renderQ() {
   fb.textContent = '';
   fb.className = 'feedback';
 
-  // Options
+  // Options / Yazma girişi
   const opts = document.getElementById('options');
-  opts.innerHTML = '';
-  q.options.forEach((opt, i) => {
-    const btn = document.createElement('button');
-    btn.className = 'opt-btn';
-    btn.setAttribute('aria-label', `Şık ${i+1}: ${opt}`);
-    if (q.optType === 'word' || q.optType === 'reading') {
-      const span = document.createElement('span');
-      span.className = 'opt-jp';
-      span.textContent = opt;
-      btn.appendChild(span);
-    } else {
-      btn.textContent = opt;
-    }
-    btn.onclick = () => checkAnswer(btn, opt, q);
-    opts.appendChild(btn);
-  });
+  const inputRow = document.getElementById('input-row');
+  if (q.optType === 'input') {
+    // 4 şıklı butonları gizle, yazma alanını göster
+    opts.innerHTML = '';
+    opts.style.display = 'none';
+    inputRow.style.display = 'flex';
+    const inp = document.getElementById('answer-input');
+    const sb = document.getElementById('submit-btn');
+    inp.value = '';
+    inp.disabled = false;
+    inp.className = 'answer-input';
+    sb.disabled = false;
+    sb.onclick = () => checkInput(q);
+    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); checkInput(q); } };
+    setTimeout(() => inp.focus(), 50);
+  } else {
+    inputRow.style.display = 'none';
+    opts.style.display = '';
+    opts.innerHTML = '';
+    q.options.forEach((opt, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'opt-btn';
+      btn.setAttribute('aria-label', `Şık ${i+1}: ${opt}`);
+      if (q.optType === 'word' || q.optType === 'reading') {
+        const span = document.createElement('span');
+        span.className = 'opt-jp';
+        span.textContent = opt;
+        btn.appendChild(span);
+      } else {
+        btn.textContent = opt;
+      }
+      btn.onclick = () => checkAnswer(btn, opt, q);
+      opts.appendChild(btn);
+    });
+  }
 
   // Next button
   clearTimeout(nextTimer);
@@ -970,6 +1040,64 @@ function checkAnswer(btn, chosen, q) {
     fb.className = 'feedback wrong';
     addSessionWrong(q);
     showExplain(q, chosen);
+
+    // "次へ" 1.5 sn boyunca pasif kalsın
+    nb.style.display = 'block';
+    nb.disabled = true;
+    clearTimeout(nextTimer);
+    nextTimer = setTimeout(() => { nb.disabled = false; }, 1500);
+  }
+
+  updateAccuracy();
+  updateBestDisplay();
+  updateMasteryBar();
+}
+
+// Yazma modu: yazılan okunuş ile doğru okunuşu (trim) karşılaştır
+function checkInput(q) {
+  if (answered) return;
+  const inp = document.getElementById('answer-input');
+  const val = inp.value.trim();
+  if (!val) { inp.focus(); return; }   // boş cevabı kabul etme
+  answered = true;
+  inp.disabled = true;
+  document.getElementById('submit-btn').disabled = true;
+
+  const fb = document.getElementById('feedback');
+  const nb = document.getElementById('next-btn');
+  const isCorrect = val === String(q.correctAnswer).trim();
+
+  // Kelime-bazlı ustalık + SRS kaydı
+  recordAnswer(q.word, isCorrect);
+  recordSRS(q.word, isCorrect);
+  saveProgress();
+
+  if (isCorrect) {
+    inp.classList.add('input-correct');
+    correct++;
+    streak++;
+    if (streak > maxStreak) maxStreak = streak;
+    if (streak > bestStreak) { bestStreak = streak; saveBest(); }
+    document.getElementById('s-c').textContent = correct;
+    document.getElementById('s-streak').textContent = streak >= 3 ? streak+'🔥' : streak;
+
+    fb.textContent = '✓ ' + q.word.reading + ' — ' + q.word.meaning;
+    fb.className = 'feedback correct';
+    hideExplain();
+
+    nb.style.display = 'block';
+    nb.disabled = false;
+  } else {
+    inp.classList.add('input-wrong');
+    wrong++;
+    streak = 0;
+    document.getElementById('s-w').textContent = wrong;
+    document.getElementById('s-streak').textContent = 0;
+
+    fb.textContent = '';
+    fb.className = 'feedback wrong';
+    addSessionWrong(q);
+    showExplain(q, val);
 
     // "次へ" 1.5 sn boyunca pasif kalsın
     nb.style.display = 'block';
@@ -1071,6 +1199,8 @@ function showSetup() {
 // 1-9: şık seç · Enter/Space: sonraki soru
 document.addEventListener('keydown', (e) => {
   if (document.getElementById('game').style.display !== 'block') return;
+  // Yazma alanına yazarken şık kısayollarını devre dışı bırak (Enter checkInput'a kalsın)
+  if (e.target && e.target.id === 'answer-input') return;
   if (!answered && e.key >= '1' && e.key <= '9') {
     const idx = parseInt(e.key, 10) - 1;
     const btns = document.querySelectorAll('.opt-btn');
