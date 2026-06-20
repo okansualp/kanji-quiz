@@ -186,6 +186,7 @@ body {
 .explain .ex-correct { background: var(--green-bg); border: 1px solid var(--green); }
 .explain .ex-tag { font-size: 10px; color: var(--muted); display: block; margin-bottom: 4px; }
 .explain .ex-val { font-family: var(--font-jp); font-size: 16px; word-break: break-word; }
+.explain .ex-kanji { font-family: var(--font-jp); font-size: 18px; color: var(--accent); text-align: center; margin-bottom: 8px; }
 .explain .ex-detail { font-size: 14px; color: var(--text); text-align: center; line-height: 1.6; }
 .explain .ex-read { font-family: var(--font-jp); color: var(--accent2); }
 .ex-lvl { display: inline-block; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }
@@ -507,7 +508,21 @@ let progress = loadProgress();
 
 // ── MASTERY HELPERS ────────────────────────────────────────────────────────
 function wordKey(w) { return w.word + '\u241f' + firstReading(w.reading); }
-function sectionWords(idx) { return LEVELS[idx].flatMap(k => k.words.map(w => ({ ...w, _kanji: k }))); }
+// Çöp/şablon kayıtları ele: 四字熟語 başlık satırları ve anlamsız kayıtlar
+function isJunkWord(w) {
+  const word = (w.word || '').trim();
+  const reading = (w.reading || '').trim();
+  const meaning = (w.meaning || '').trim();
+  if (!word || !reading || !meaning) return true;
+  if (word === '四字熟語' || reading === 'Okunuş') return true;
+  if (meaning === '—' || meaning === '-' || meaning === 'なし') return true;
+  if (meaning.includes('する動詞') || meaning.includes('の-Sıfatı') ||
+      meaning.includes('İsim/する') || meaning.includes('名詞')) return true;
+  return false;
+}
+function sectionWords(idx) {
+  return LEVELS[idx].flatMap(k => k.words.map(w => ({ ...w, _kanji: k }))).filter(w => !isJunkWord(w));
+}
 function isLearned(w) { return (progress.stats[wordKey(w)] || 0) >= LEARN_HITS; }
 function learnedCount(idx) { return sectionWords(idx).filter(isLearned).length; }
 function sectionMastery(idx) {
@@ -549,8 +564,12 @@ function recordSRS(w, correct) {
 }
 
 // ── EN İYİ SERİ (best streak) ──────────────────────────────────────────────
-const BEST_KEY = 'kanjiBestStreak';
-function loadBest() { const n = parseInt(localStorage.getItem(BEST_KEY), 10); return isNaN(n) ? 0 : n; }
+const BEST_KEY = 'best_streak';
+function loadBest() {
+  let n = parseInt(localStorage.getItem(BEST_KEY), 10);
+  if (isNaN(n)) n = parseInt(localStorage.getItem('kanjiBestStreak'), 10); // eski anahtardan taşı
+  return isNaN(n) ? 0 : n;
+}
 let bestStreak = loadBest();
 function saveBest() { try { localStorage.setItem(BEST_KEY, String(bestStreak)); } catch (e) {} }
 
@@ -748,10 +767,17 @@ function generateQuestions() {
   const allWords = sectionWords(currentLevel);
   const n = Math.min(totalQ, allWords.length);
 
-  // Ağırlık: öğrenilmemişlere öncelik (3x) + SRS'te yanlış yapılanlara %40 ek ağırlık
-  const weightFn = (w) => (isLearned(w) ? 1 : 3) * (srsMiss(w) > 0 ? 1.4 : 1);
+  // SRS: yanlış yapılan (missCount>0) kelimeleri öne çek — en fazla totalQ'nun %40'ı
+  const maxSrs = Math.floor(n * 0.4);
+  const missed = shuffle(allWords.filter(w => srsMiss(w) > 0)).slice(0, maxSrs);
+  const missedKeys = new Set(missed.map(wordKey));
 
-  const chosen = weightedSampleNoReplace(allWords, weightFn, n);
+  // Kalanı öğrenilmemişlere öncelik veren ağırlıkla doldur
+  const rest = allWords.filter(w => !missedKeys.has(wordKey(w)));
+  const weightFn = (w) => isLearned(w) ? 1 : 3;
+  const filler = weightedSampleNoReplace(rest, weightFn, n - missed.length);
+
+  const chosen = [...missed, ...filler];
   questions = chosen.map(w => buildQuestion(w, w._kanji, allWords));
 }
 
@@ -803,6 +829,14 @@ function addSessionWrong(q) {
 
 function lvlBadge(level) { return level ? `<span class="ex-lvl">${escapeHtml(level)}</span>` : ''; }
 
+// Kanji satırı: çıkarılmış kanji + (varsa) anlamı. q.kanji.meaning bu veride çoğunlukla boş.
+function kanjiLine(kanjiEntry) {
+  const kj = extractKanji(kanjiEntry.kanji) || '';
+  const m = (kanjiEntry.meaning || '').trim();
+  if (!kj && !m) return '';
+  return `<div class="ex-kanji">${escapeHtml(kj)}${m ? ' — ' + escapeHtml(m) : ''}</div>`;
+}
+
 function hideExplain() {
   const ex = document.getElementById('explain');
   ex.style.display = 'none';
@@ -817,6 +851,7 @@ function showExplain(q, chosen) {
       `<div class="ex-ans ex-wrong"><span class="ex-tag">❌ Senin cevabın</span><span class="ex-val">${escapeHtml(chosen)}</span></div>` +
       `<div class="ex-ans ex-correct"><span class="ex-tag">✅ Doğru cevap</span><span class="ex-val">${escapeHtml(q.correctAnswer)}</span></div>` +
     `</div>` +
+    kanjiLine(q.kanji) +
     `<div class="ex-detail">` +
       `<b>${escapeHtml(w.word)}</b> · <span class="ex-read">${escapeHtml(w.reading)}</span>${lvlBadge(w.level)}<br>` +
       `${escapeHtml(w.meaning)}` +
