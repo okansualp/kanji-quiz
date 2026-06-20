@@ -530,7 +530,7 @@ function buildLevelMap() {
   const grid = document.getElementById('level-grid');
   grid.innerHTML = '';
   LEVELS.forEach((lvl, idx) => {
-    const locked = idx > progress.unlocked;
+    const locked = false;   // tüm bölümler açık
     const cleared = isMastered(idx);
     const isCurrent = idx === progress.unlocked;
     const card = document.createElement('div');
@@ -680,7 +680,7 @@ function generateQuestions() {
 
 // ── GAME FLOW ─────────────────────────────────────────────────────────────
 function startLevel(idx) {
-  if (idx > progress.unlocked) return;        // kilitli bölüm
+  if (idx < 0) idx = 0;
   if (idx >= LEVELS.length) idx = LEVELS.length - 1;
   currentLevel = idx;
   generateQuestions();
