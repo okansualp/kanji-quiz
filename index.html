@@ -443,7 +443,7 @@ const CLEAN_DATA = KANJI_DATA
 // 10 kanjilik bölümlere ayır
 const LEVEL_SIZE = 10;
 const MASTERY_PCT = 85;     // bölümü tamamlamak için öğrenilmesi gereken kelime yüzdesi
-const LEARN_HITS = 2;       // bir kelimenin "öğrenildi" sayılması için gereken doğru sayısı
+const LEARN_HITS = 1;       // bir kelimenin "öğrenildi" sayılması için gereken doğru sayısı
 const LEVELS = [];
 for (let i = 0; i < CLEAN_DATA.length; i += LEVEL_SIZE) {
   LEVELS.push(CLEAN_DATA.slice(i, i + LEVEL_SIZE));
