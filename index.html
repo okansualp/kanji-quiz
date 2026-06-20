@@ -61,7 +61,7 @@ body {
 /* Stats bar */
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   margin-bottom: 20px;
 }
@@ -168,7 +168,40 @@ body {
   transition: border-color 0.12s, color 0.12s;
   display: none;
 }
-.next-btn:hover { border-color: var(--accent); color: var(--accent); }
+.next-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.next-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* Açıklama paneli (yanlış cevap) */
+.explain {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  display: none;
+}
+.explain .ex-row { display: flex; gap: 10px; margin-bottom: 12px; }
+.explain .ex-ans { flex: 1; min-width: 0; border-radius: 8px; padding: 8px 10px; text-align: center; }
+.explain .ex-wrong { background: var(--red-bg); border: 1px solid var(--red); }
+.explain .ex-correct { background: var(--green-bg); border: 1px solid var(--green); }
+.explain .ex-tag { font-size: 10px; color: var(--muted); display: block; margin-bottom: 4px; }
+.explain .ex-val { font-family: var(--font-jp); font-size: 16px; word-break: break-word; }
+.explain .ex-detail { font-size: 14px; color: var(--text); text-align: center; line-height: 1.6; }
+.explain .ex-read { font-family: var(--font-jp); color: var(--accent2); }
+.ex-lvl { display: inline-block; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }
+
+/* Oturum sonu hata listesi */
+.misses { text-align: left; margin: 4px 0 28px; display: none; }
+.misses-title { font-size: 13px; color: var(--muted); margin-bottom: 10px; text-align: center; }
+.miss-item {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px;
+}
+.miss-word { font-family: var(--font-jp); font-size: 22px; color: var(--text); min-width: 48px; text-align: center; }
+.miss-info { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.miss-info b { color: var(--text); font-weight: 600; }
+.miss-read { font-family: var(--font-jp); color: var(--accent2); }
 
 /* Mode selector */
 .mode-row {
@@ -375,6 +408,8 @@ body {
       <div class="stat"><div class="stat-val" id="s-c" style="color:#5a9a6e">0</div><div class="stat-label">Doğru</div></div>
       <div class="stat"><div class="stat-val" id="s-w" style="color:#9a5a5a">0</div><div class="stat-label">Yanlış</div></div>
       <div class="stat"><div class="stat-val" id="s-streak">0</div><div class="stat-label">Seri</div></div>
+      <div class="stat"><div class="stat-val" id="s-acc">—</div><div class="stat-label">正答率</div></div>
+      <div class="stat"><div class="stat-val" id="s-best">🔥 0</div><div class="stat-label">最高</div></div>
     </div>
 
     <div class="progress-wrap">
@@ -394,6 +429,7 @@ body {
 
     <div class="options" id="options"></div>
     <div class="feedback" id="feedback"></div>
+    <div class="explain" id="explain"></div>
     <button class="next-btn" id="next-btn" onclick="nextQ()">次へ →</button>
   </div>
 
@@ -403,6 +439,7 @@ body {
       <div class="pass-banner" id="pass-banner"></div>
       <div class="end-score" id="end-score"></div>
       <div class="end-sub" id="end-sub"></div>
+      <div class="misses" id="end-misses"></div>
       <div class="end-actions" id="end-actions"></div>
     </div>
   </div>
@@ -491,6 +528,32 @@ function recordAnswer(w, correct) {
   progress.stats[k] = correct ? Math.min(LEARN_HITS, cur + 1) : Math.max(0, cur - 1);
 }
 
+// ── SRS (srs_data) ─────────────────────────────────────────────────────────
+// Yanlış yapılan kelimeleri takip eder; soru seçiminde bunlara ek ağırlık verir.
+const SRS_KEY = 'srs_data';
+function loadSRS() {
+  try { const s = JSON.parse(localStorage.getItem(SRS_KEY)); if (s && typeof s === 'object') return s; } catch (e) {}
+  return {};
+}
+let srs = loadSRS();
+function saveSRS() { try { localStorage.setItem(SRS_KEY, JSON.stringify(srs)); } catch (e) {} }
+function srsMiss(w) { const e = srs[wordKey(w)]; return e ? (e.missCount || 0) : 0; }
+function recordSRS(w, correct) {
+  const k = wordKey(w);
+  const e = srs[k] || { kanji: w.word, missCount: 0, lastSeen: 0 };
+  e.kanji = w.word;
+  e.missCount = correct ? Math.max(0, (e.missCount || 0) - 1) : (e.missCount || 0) + 1;
+  e.lastSeen = Date.now();
+  srs[k] = e;
+  saveSRS();
+}
+
+// ── EN İYİ SERİ (best streak) ──────────────────────────────────────────────
+const BEST_KEY = 'kanjiBestStreak';
+function loadBest() { const n = parseInt(localStorage.getItem(BEST_KEY), 10); return isNaN(n) ? 0 : n; }
+let bestStreak = loadBest();
+function saveBest() { try { localStorage.setItem(BEST_KEY, String(bestStreak)); } catch (e) {} }
+
 // ── STATE ─────────────────────────────────────────────────────────────────
 let gameMode = 'mix';       // mix | meaning | reading | pick
 let totalQ = 10;
@@ -498,6 +561,8 @@ let currentLevel = 0;
 let questions = [];
 let qi = 0, correct = 0, wrong = 0, streak = 0, maxStreak = 0;
 let answered = false;
+let sessionWrong = [];      // bu oturumda yanlış cevaplanan sorular
+let nextTimer = null;       // "次へ" gecikmeli aktifleştirme zamanlayıcısı
 
 // ── SETUP ─────────────────────────────────────────────────────────────────
 function buildSetup() {
@@ -663,19 +728,31 @@ function buildQuestion(wordEntry, kanjiEntry, allWords) {
   }
 }
 
+// Ağırlığa göre, tekrarsız n eleman seç
+function weightedSampleNoReplace(items, weightFn, n) {
+  const pool = items.map(it => ({ it, w: Math.max(0.0001, weightFn(it)) }));
+  const out = [];
+  while (out.length < n && pool.length) {
+    let total = 0;
+    for (const p of pool) total += p.w;
+    let r = Math.random() * total, idx = 0;
+    for (; idx < pool.length - 1; idx++) { r -= pool[idx].w; if (r <= 0) break; }
+    out.push(pool[idx].it);
+    pool.splice(idx, 1);
+  }
+  return out;
+}
+
 function generateQuestions() {
   // Aktif bölümdeki kanjilerin tüm kelimeleri (çeldirici havuzu)
   const allWords = sectionWords(currentLevel);
+  const n = Math.min(totalQ, allWords.length);
 
-  // Öğrenilmemiş kelimelere öncelik ver; az doğrusu olanlar önce gelir
-  const ordered = shuffle(allWords)
-    .sort((a, b) => (progress.stats[wordKey(a)] || 0) - (progress.stats[wordKey(b)] || 0));
+  // Ağırlık: öğrenilmemişlere öncelik (3x) + SRS'te yanlış yapılanlara %40 ek ağırlık
+  const weightFn = (w) => (isLearned(w) ? 1 : 3) * (srsMiss(w) > 0 ? 1.4 : 1);
 
-  questions = [];
-  for (let i = 0; i < Math.min(totalQ, ordered.length); i++) {
-    const wordEntry = ordered[i];
-    questions.push(buildQuestion(wordEntry, wordEntry._kanji, allWords));
-  }
+  const chosen = weightedSampleNoReplace(allWords, weightFn, n);
+  questions = chosen.map(w => buildQuestion(w, w._kanji, allWords));
 }
 
 // ── GAME FLOW ─────────────────────────────────────────────────────────────
@@ -686,6 +763,10 @@ function startLevel(idx) {
   generateQuestions();
   if (!questions.length) { alert('Yeterli kelime yok!'); return; }
   qi = 0; correct = 0; wrong = 0; streak = 0; maxStreak = 0; answered = false;
+  sessionWrong = [];
+  clearTimeout(nextTimer);
+  document.getElementById('s-acc').textContent = '—';
+  updateBestDisplay();
 
   // Boss bar
   document.getElementById('boss-title').textContent = `Bölüm ${idx+1} / ${LEVELS.length}`;
@@ -707,6 +788,42 @@ function updateMasteryBar() {
   document.getElementById('p-pct').textContent = pct + '%';
 }
 
+function updateAccuracy() {
+  const ans = correct + wrong;
+  document.getElementById('s-acc').textContent = ans ? Math.round(correct / ans * 100) + '%' : '—';
+}
+function updateBestDisplay() {
+  document.getElementById('s-best').textContent = '🔥 ' + bestStreak;
+}
+
+function addSessionWrong(q) {
+  const k = wordKey(q.word);
+  if (!sessionWrong.some(x => wordKey(x.word) === k)) sessionWrong.push(q);
+}
+
+function lvlBadge(level) { return level ? `<span class="ex-lvl">${escapeHtml(level)}</span>` : ''; }
+
+function hideExplain() {
+  const ex = document.getElementById('explain');
+  ex.style.display = 'none';
+  ex.innerHTML = '';
+}
+// Yanlış cevap açıklaması: ❌ senin cevabın · ✅ doğru cevap + okunuş + Türkçe anlam + seviye
+function showExplain(q, chosen) {
+  const w = q.word;
+  const ex = document.getElementById('explain');
+  ex.innerHTML =
+    `<div class="ex-row">` +
+      `<div class="ex-ans ex-wrong"><span class="ex-tag">❌ Senin cevabın</span><span class="ex-val">${escapeHtml(chosen)}</span></div>` +
+      `<div class="ex-ans ex-correct"><span class="ex-tag">✅ Doğru cevap</span><span class="ex-val">${escapeHtml(q.correctAnswer)}</span></div>` +
+    `</div>` +
+    `<div class="ex-detail">` +
+      `<b>${escapeHtml(w.word)}</b> · <span class="ex-read">${escapeHtml(w.reading)}</span>${lvlBadge(w.level)}<br>` +
+      `${escapeHtml(w.meaning)}` +
+    `</div>`;
+  ex.style.display = 'block';
+}
+
 function renderQ() {
   answered = false;
   const q = questions[qi];
@@ -717,9 +834,14 @@ function renderQ() {
   document.getElementById('s-c').textContent = correct;
   document.getElementById('s-w').textContent = wrong;
   document.getElementById('s-streak').textContent = streak >= 3 ? streak+'🔥' : streak;
+  updateAccuracy();
+  updateBestDisplay();
 
   // Progress bar = bölüm ustalığı (öğrenilen kelime oranı), canlı güncellenir
   updateMasteryBar();
+
+  // Açıklama panelini sıfırla
+  hideExplain();
 
   // Card
   document.getElementById('q-mode-tag').textContent = q.modeTag;
@@ -754,7 +876,10 @@ function renderQ() {
   });
 
   // Next button
-  document.getElementById('next-btn').style.display = 'none';
+  clearTimeout(nextTimer);
+  const nb = document.getElementById('next-btn');
+  nb.style.display = 'none';
+  nb.disabled = false;
 }
 
 function checkAnswer(btn, chosen, q) {
@@ -767,15 +892,19 @@ function checkAnswer(btn, chosen, q) {
   const fb = document.getElementById('feedback');
   const isCorrect = chosen === q.correctAnswer;
 
-  // Kelime-bazlı ustalığı güncelle ve kaydet
+  // Kelime-bazlı ustalık + SRS kaydı
   recordAnswer(q.word, isCorrect);
+  recordSRS(q.word, isCorrect);
   saveProgress();
+
+  const nb = document.getElementById('next-btn');
 
   if (isCorrect) {
     btn.classList.add('correct');
     correct++;
     streak++;
     if (streak > maxStreak) maxStreak = streak;
+    if (streak > bestStreak) { bestStreak = streak; saveBest(); }
     document.getElementById('s-c').textContent = correct;
     document.getElementById('s-streak').textContent = streak >= 3 ? streak+'🔥' : streak;
 
@@ -785,6 +914,10 @@ function checkAnswer(btn, chosen, q) {
     else msg += q.word.reading + ' — ' + q.word.meaning;
     fb.textContent = msg;
     fb.className = 'feedback correct';
+    hideExplain();
+
+    nb.style.display = 'block';
+    nb.disabled = false;
   } else {
     btn.classList.add('wrong');
     wrong++;
@@ -798,14 +931,21 @@ function checkAnswer(btn, chosen, q) {
       if (bText.trim() === q.correctAnswer.trim()) b.classList.add('reveal');
     });
 
-    let msg = '✗  Doğrusu: ' + q.correctAnswer;
-    if (q.optType === 'word') msg += '  ' + q.word.reading + ' — ' + q.word.meaning;
-    fb.textContent = msg;
+    fb.textContent = '';
     fb.className = 'feedback wrong';
+    addSessionWrong(q);
+    showExplain(q, chosen);
+
+    // "次へ" 1.5 sn boyunca pasif kalsın
+    nb.style.display = 'block';
+    nb.disabled = true;
+    clearTimeout(nextTimer);
+    nextTimer = setTimeout(() => { nb.disabled = false; }, 1500);
   }
 
+  updateAccuracy();
+  updateBestDisplay();
   updateMasteryBar();
-  document.getElementById('next-btn').style.display = 'block';
 }
 
 function nextQ() {
@@ -842,7 +982,26 @@ function showEnd() {
   const label = mastered ? 'Bölüm tamam 🎉'
     : (remaining <= 3 ? `Az kaldı! ${remaining} kelime daha 💪` : `${remaining} kelime daha öğren 📖`);
   document.getElementById('end-sub').textContent =
-    `Bölüm ustalığı: %${masteryPct} · Bu oturum: %${sessionPct} doğru · En uzun seri: ${maxStreak} · ${label}`;
+    `Bölüm ustalığı: %${masteryPct} · 正答率 ${sessionPct}% · En uzun seri: ${maxStreak} · 最高 🔥 ${bestStreak} · ${label}`;
+
+  // Bu oturumda yanlış cevaplanan kelimeler
+  const misses = document.getElementById('end-misses');
+  if (sessionWrong.length) {
+    let html = `<div class="misses-title">Bu oturumda zorlandığın kelimeler (${sessionWrong.length})</div>`;
+    for (const q of sessionWrong) {
+      const w = q.word;
+      html +=
+        `<div class="miss-item">` +
+          `<div class="miss-word">${escapeHtml(w.word)}</div>` +
+          `<div class="miss-info"><span class="miss-read">${escapeHtml(w.reading)}</span>${lvlBadge(w.level)}<br><b>${escapeHtml(w.meaning)}</b></div>` +
+        `</div>`;
+    }
+    misses.innerHTML = html;
+    misses.style.display = 'block';
+  } else {
+    misses.innerHTML = '';
+    misses.style.display = 'none';
+  }
 
   // Eylem butonları
   const acts = document.getElementById('end-actions');
@@ -883,7 +1042,8 @@ document.addEventListener('keydown', (e) => {
     if (idx < btns.length) btns[idx].click();
   } else if (answered && (e.key === 'Enter' || e.key === ' ')) {
     e.preventDefault();
-    if (document.getElementById('next-btn').style.display !== 'none') nextQ();
+    const nb = document.getElementById('next-btn');
+    if (nb.style.display !== 'none' && !nb.disabled) nextQ();
   }
 });
 
