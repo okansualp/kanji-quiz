@@ -1,4 +1,4 @@
-const CACHE = 'kanji-quiz-v6';
+const CACHE = 'kanji-quiz-v7';
 const ASSETS = [
   './',
   './index.html',
