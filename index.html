@@ -274,6 +274,18 @@ body {
 .level-card.locked .lc-kanji { color: var(--muted); filter: blur(3px); user-select: none; }
 .lc-lock { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:24px; }
 .lc-score { font-size: 11px; color: var(--muted); margin-top:6px; }
+.lc-words { font-family: var(--font-jp); font-size: 11px; color: var(--muted); margin-top:5px; line-height:1.4; opacity:0.7; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* Words panel (collapsible) */
+.words-panel { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); margin-bottom:12px; overflow:hidden; }
+.words-toggle { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; cursor:pointer; font-size:13px; color:var(--accent); }
+.words-toggle:hover { background:rgba(255,255,255,0.03); }
+.words-toggle .wt-arrow { transition:transform 0.2s; }
+.words-panel.open .wt-arrow { transform:rotate(180deg); }
+.words-body { display:none; padding:0 14px 12px; font-family:var(--font-jp); font-size:13px; color:var(--muted); line-height:1.8; word-break:break-all; }
+.words-panel.open .words-body { display:block; }
+.words-body .wb-kanji { color:var(--accent); font-size:14px; font-weight:600; margin-right:4px; }
+.words-body .wb-list { margin-bottom:8px; }
 
 /* Boss/level header */
 .boss-bar {
@@ -399,6 +411,14 @@ body {
       <div class="mode-tag" id="q-mode-tag">—</div>
       <div class="q-display" id="q-display">—</div>
       <div class="q-sub" id="q-sub"></div>
+    </div>
+
+    <div class="words-panel" id="words-panel">
+      <div class="words-toggle" onclick="toggleWordsPanel()">
+        <span>📚 Bu bölümün kelimeleri</span>
+        <span class="wt-arrow">▼</span>
+      </div>
+      <div class="words-body" id="words-body"></div>
     </div>
 
     <div class="options" id="options"></div>
@@ -550,6 +570,7 @@ function buildLevelMap() {
     card.innerHTML =
       '<div class="lc-top"><span class="lc-num">Bölüm ' + (idx+1) + '</span>' + badge + '</div>' +
       '<div class="lc-kanji">' + kanjiStr + '</div>' +
+      '<div class="lc-words">' + lvl.kanjis.slice(0,3).flatMap(k => (k.words||[]).slice(0,2)).join('、') + '…</div>' +
       '<div class="lc-score">' + learned + '/' + total + ' kanji · %' + pct + '</div>';
     card.onclick = () => startLevel(idx);
     grid.appendChild(card);
@@ -568,6 +589,10 @@ function resetProgress() {
   srs = {};
   saveSRS();
   buildLevelMap();
+}
+
+function toggleWordsPanel() {
+  document.getElementById('words-panel').classList.toggle('open');
 }
 
 function escapeHtml(s) {
@@ -708,6 +733,18 @@ function startLevel(idx) {
   document.getElementById('boss-title').textContent = 'Bölüm ' + (idx+1) + ' / ' + LEVELS.length;
   document.getElementById('boss-kanji').textContent = LEVELS[idx].kanjis.map(k => k.kanji).join(' ');
   document.getElementById('boss-need').textContent = 'Açmak için kanjilerin %' + MASTERY_PCT + "'i";
+
+  // Words panel
+  const wp = document.getElementById('words-panel');
+  wp.classList.remove('open');
+  let whtml = '';
+  LEVELS[idx].kanjis.forEach(k => {
+    if (k.words && k.words.length) {
+      whtml += '<div class="wb-list"><span class="wb-kanji">' + escapeHtml(k.kanji) + '</span> ' +
+        k.words.map(w => escapeHtml(w)).join('、') + '</div>';
+    }
+  });
+  document.getElementById('words-body').innerHTML = whtml || '<span style="color:var(--muted)">Kelime yok</span>';
 
   document.getElementById('setup').style.display = 'none';
   document.getElementById('endscreen').style.display = 'none';
